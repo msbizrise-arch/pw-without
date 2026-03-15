@@ -82,6 +82,15 @@ async def fetch_pwwp_data(session: aiohttp.ClientSession, url: str, headers: Dic
     for attempt in range(max_retries):
         try:
             async with session.request(method, url, headers=headers, params=params, json=data) as response:
+                if response.status == 429:
+                    wait_time = 5 * (attempt + 1)
+                    logging.warning(f"Rate limited (429) on {url}, waiting {wait_time}s (attempt {attempt+1})")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(wait_time)
+                        continue
+                    else:
+                        logging.error(f"Rate limited on {url} after {max_retries} attempts.")
+                        return None
                 response.raise_for_status()
                 return await response.json()
         except aiohttp.ClientError as e:
@@ -358,13 +367,16 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
         await editable.edit("**Timeout! You took too long to respond**")
         return
 
+    random_id = str(uuid.uuid4())
+    pw_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+
     headers = {
-        'client-id': '5eb393ee95fab7468a79d189',
-        'client-version': '12400',
-        'user-agent': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-        'randomid': str(uuid.uuid4()),
-        'client-type': 'WEB',
-        'content-type': 'application/json; charset=utf-8',
+        'Content-Type': 'application/json',
+        'Client-Id': '5eb393ee95fab7468a79d189',
+        'Client-Type': 'WEB',
+        'Client-Version': '2.6.12',
+        'Randomid': random_id,
+        'User-Agent': pw_user_agent,
     }
 
     CONNECTOR = aiohttp.TCPConnector(limit=1000)
@@ -379,24 +391,45 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     "organizationId": "5eb393ee95fab7468a79d189"
                 }
                 otp_headers = {
-                    'client-id': '5eb393ee95fab7468a79d189',
-                    'client-version': '12400',
-                    'user-agent': headers['user-agent'],
-                    'randomid': headers['randomid'],
-                    'client-type': 'WEB',
-                    'content-type': 'application/json; charset=utf-8',
+                    'Content-Type': 'application/json',
+                    'Client-Id': '5eb393ee95fab7468a79d189',
+                    'Client-Type': 'WEB',
+                    'Client-Version': '2.6.12',
+                    'Integration-With': 'Origin',
                 }
-                try:
-                    async with session.post("https://api.penpencil.co/v3/users/get-otp?smsType=2", json=data, headers=otp_headers) as response:
-                        otp_resp = await response.json()
-                        logging.info(f"OTP Response: {otp_resp}")
-                        if not otp_resp.get("success"):
-                            msg = otp_resp.get("message", "OTP send failed")
-                            await editable.edit(f"**❌ OTP Error: {msg}**")
-                            return
-                except Exception as e:
-                    logging.exception(f"Error sending OTP: {e}")
-                    await editable.edit(f"**Error sending OTP: {e}**")
+                otp_sent = False
+                for otp_attempt in range(3):
+                    try:
+                        async with session.post("https://api.penpencil.co/v1/users/get-otp?smsType=0", json=data, headers=otp_headers) as response:
+                            otp_resp = await response.json()
+                            logging.info(f"OTP Response (attempt {otp_attempt+1}): {otp_resp}")
+                            if response.status == 429:
+                                if otp_attempt < 2:
+                                    await editable.edit(f"**⏳ Rate limited, retrying in {5*(otp_attempt+1)}s...**")
+                                    await asyncio.sleep(5 * (otp_attempt + 1))
+                                    continue
+                                else:
+                                    await editable.edit("**❌ Too Many Requests. Please wait 2-3 minutes and try again.**")
+                                    return
+                            if otp_resp.get("success"):
+                                otp_sent = True
+                                break
+                            else:
+                                msg = otp_resp.get("message", "OTP send failed")
+                                if otp_attempt < 2:
+                                    await asyncio.sleep(3)
+                                    continue
+                                await editable.edit(f"**❌ OTP Error: {msg}**")
+                                return
+                    except Exception as e:
+                        logging.exception(f"Error sending OTP (attempt {otp_attempt+1}): {e}")
+                        if otp_attempt < 2:
+                            await asyncio.sleep(3)
+                            continue
+                        await editable.edit(f"**Error sending OTP: {e}**")
+                        return
+                if not otp_sent:
+                    await editable.edit("**❌ OTP send failed after retries. Try again later.**")
                     return
 
                 editable = await editable.edit("**ENTER OTP YOU RECEIVED**")
@@ -419,12 +452,28 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     "longitude": 0
                 }
 
+                token_headers = {
+                    'Content-Type': 'application/json',
+                    'Client-Id': '5eb393ee95fab7468a79d189',
+                    'Client-Type': 'WEB',
+                    'Client-Version': '2.6.12',
+                    'Integration-With': '',
+                    'Randomid': random_id,
+                    'Referer': 'https://www.pw.live/',
+                    'User-Agent': pw_user_agent,
+                }
                 try:
-                    async with session.post(f"https://api.penpencil.co/v3/oauth/token", json=payload, headers=otp_headers) as response:
+                    async with session.post(f"https://api.penpencil.co/v3/oauth/token", json=payload, headers=token_headers) as response:
                         token_resp = await response.json()
                         logging.info(f"Token Response status: {response.status}")
-                        if not token_resp.get("success") or not token_resp.get("data"):
+                        if response.status == 429:
+                            await editable.edit("**❌ Too Many Requests. Please wait 2-3 minutes and try again.**")
+                            return
+                        if not token_resp.get("data") or not token_resp["data"].get("access_token"):
                             msg = token_resp.get("message", "Login failed")
+                            err_obj = token_resp.get("error", {})
+                            if isinstance(err_obj, dict) and err_obj.get("message"):
+                                msg = err_obj["message"]
                             await editable.edit(f"**❌ Login Error: {msg}**")
                             return
                         access_token = token_resp["data"]["access_token"]
@@ -444,18 +493,39 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                 'mode': '1',
                 'page': '1',
             }
-            try:
-                async with session.get(f"https://api.penpencil.co/v3/batches/all-purchased-batches", headers=headers, params=params) as response:
-                    resp_json = await response.json()
-                    logging.info(f"Purchased batches response status: {response.status}")
-                    if response.status == 401 or not resp_json.get("success"):
-                        msg = resp_json.get("message", "Token is expired or invalid")
-                        await editable.edit(f"**```\nLogin Failed❗{msg}```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
-                        return
-                    batches = resp_json.get("data", [])
-            except Exception as e:
-                logging.exception(f"Error fetching purchased batches: {e}")
-                await editable.edit(f"**```\nLogin Failed❗Error: {e}```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
+            batches = None
+            for batch_attempt in range(3):
+                try:
+                    async with session.get(f"https://api.penpencil.co/v3/batches/all-purchased-batches", headers=headers, params=params) as response:
+                        resp_json = await response.json()
+                        logging.info(f"Purchased batches response status: {response.status} (attempt {batch_attempt+1})")
+                        if response.status == 429:
+                            if batch_attempt < 2:
+                                wait_time = 5 * (batch_attempt + 1)
+                                await editable.edit(f"**⏳ Rate limited, retrying in {wait_time}s...**")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            else:
+                                await editable.edit("**❌ Too Many Requests. Please wait 2-3 minutes and try again.**")
+                                return
+                        if response.status == 401:
+                            await editable.edit("**```\nLogin Failed❗Token is expired or invalid```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
+                            return
+                        if not resp_json.get("success"):
+                            msg = resp_json.get("message", "Unknown error")
+                            await editable.edit(f"**```\nLogin Failed❗{msg}```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
+                            return
+                        batches = resp_json.get("data", [])
+                        break
+                except Exception as e:
+                    logging.exception(f"Error fetching purchased batches (attempt {batch_attempt+1}): {e}")
+                    if batch_attempt < 2:
+                        await asyncio.sleep(3)
+                        continue
+                    await editable.edit(f"**```\nLogin Failed❗Error: {e}```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
+                    return
+            if batches is None:
+                await editable.edit("**❌ Failed to fetch batches after retries. Try again later.**")
                 return
         
             await editable.edit("**Enter Your Batch Name**")

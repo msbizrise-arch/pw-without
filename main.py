@@ -24,7 +24,10 @@ from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import FloodWait
 from pyromod import listen
-from pyromod.exceptions.listener_timeout import ListenerTimeout
+try:
+    from pyromod.exceptions.listener_timeout import ListenerTimeout
+except ImportError:
+    from pyromod.listen import ListenerTimeout
 from pyrogram.types import Message
 import pyrogram
 from pyrogram import Client, filters
@@ -375,9 +378,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
         'content-type': 'application/json; charset=utf-8',
     }
 
-    loop = asyncio.get_event_loop()    
-    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
-    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
+    CONNECTOR = aiohttp.TCPConnector(limit=1000)
+    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
         try:
             if raw_text1.isdigit() and len(raw_text1) == 10:
                 phone = raw_text1

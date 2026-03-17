@@ -1,5 +1,11 @@
-import requests
 import asyncio
+# Fix for Python 3.10+: create event loop before pyrogram import
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+import requests
 import aiohttp
 import json
 import zipfile
@@ -47,17 +53,6 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8433886804:AAGyxrEGWE8sL7nbeNHUJW07zINB
 
 # Initialize Bot Globally (IMPORTANT FIX)
 bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-
-# Flask app for Render
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_flask():
-    app.run(host="0.0.0.0", port=1000) #Use 8080 Port here, if you're deploying it on koyeb
-    
 
 image_list = [
     "https://i.ibb.co/0p3pmkwn/Angel.jpg"
@@ -423,9 +418,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
         'content-type': 'application/json; charset=utf-8',
     }
 
-    loop = asyncio.get_event_loop()    
-    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
-    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
+    CONNECTOR = aiohttp.TCPConnector(limit=1000)
+    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
         try:
             if raw_text1.isdigit() and len(raw_text1) == 10:
                 phone = raw_text1
@@ -852,9 +846,8 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
         'webengage-luid' : '00000187-6fe4-5d41-a530-26186858be4c'
     }
 
-    loop = asyncio.get_event_loop()
-    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
-    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
+    CONNECTOR = aiohttp.TCPConnector(limit=1000)
+    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
         try:
             editable = await m.reply_text("**Enter ORG Code Of Your Classplus App**")
             
@@ -1463,10 +1456,9 @@ async def appxwp_callback(bot, callback_query):
 
 async def process_appxwp(bot: Client, m: Message, user_id: int):
 
-    loop = asyncio.get_event_loop()
-    CONNECTOR = aiohttp.TCPConnector(limit=100, loop=loop)
+    CONNECTOR = aiohttp.TCPConnector(limit=100)
 
-    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
+    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
         try:
             editable = await m.reply_text("**Enter App Name Or Api**")
 
@@ -1714,7 +1706,4 @@ threading.Thread(target=run_flask, daemon=True).start()
 
 # Start Flask + Bot
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
     bot.run()
-                                        
-

@@ -8,7 +8,7 @@ mediainfo
 cloudscraper
 beautifulsoup4==4.12.2
 bs4==0.0.2
-aiohttp
+aiohttp==3.8.6
 aiofiles
 yt-dlp==2023.12.30
 pycryptodome==3.20.0

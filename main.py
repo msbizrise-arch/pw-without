@@ -80,7 +80,7 @@ async def start(bot, message):
     quote=True,
     reply_markup=reply_markup
   )
-@bot.on_message(group=2)
+#@bot.on_message(group=2)
 #async def account_login(bot: Client, m: Message):
 #    try:
 #        await bot.forward_messages(chat_id=chat_id, from_chat_id=m.chat.id, message_ids=m.id)
@@ -377,9 +377,9 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
         'client-type': 'WEB',
         'content-type': 'application/json; charset=utf-8',
     }
-
-    CONNECTOR = aiohttp.TCPConnector(limit=1000)
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    loop = asyncio.get_event_loop()
+    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             if raw_text1.isdigit() and len(raw_text1) == 10:
                 phone = raw_text1
@@ -705,7 +705,8 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                         identifier = url_val.split('/')[-2]
                         url_val = f'https://media-cdn.classplusapp.com/tencent/{identifier}/master.m3u8'
                     elif "4b06bf8d61c41f8310af9b2624459378203740932b456b07fcf817b737fbae27" in url_val and url_val.endswith('.jpeg'):
-                        url_val = f'https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{url_val.split('/')[-1].split('.')[0]}/master.m3u8'
+                        _vid_id = url_val.split('/')[-1].split('.')[0]
+                        url_val = f'https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{_vid_id}/master.m3u8'
                     elif "cpvideocdn.testbook.com" in url_val and url_val.endswith('.png'):
                         match = re.search(r'/streams/([a-f0-9]{24})/', url_val)
                         video_id = match.group(1) if match else url_val.split('/')[-2]
@@ -805,9 +806,9 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
         'user-agent'     : 'Mobile-Android',
         'webengage-luid' : '00000187-6fe4-5d41-a530-26186858be4c'
     }
-
-    CONNECTOR = aiohttp.TCPConnector(limit=1000)
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    loop = asyncio.get_event_loop()
+    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             editable = await m.reply_text("**Enter ORG Code Of Your Classplus App**")
             
@@ -1416,8 +1417,10 @@ async def appxwp_callback(bot, callback_query):
 
 async def process_appxwp(bot: Client, m: Message, user_id: int):
 
-    CONNECTOR = aiohttp.TCPConnector(limit=100)
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    loop = asyncio.get_event_loop()
+    CONNECTOR = aiohttp.TCPConnector(limit=100, loop=loop)
+
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             editable = await m.reply_text("**Enter App Name Or Api**")
 

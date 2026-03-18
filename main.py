@@ -1,72 +1,5 @@
-import asyncio
-import sys
-
-# Fix for Python 3.10+: create event loop before pyrogram import
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-# Fix for Python 3.14+: pyromod Identifier.__annotations__ compatibility
-# In Python 3.14, instance __annotations__ is no longer auto-created,
-# causing pyromod callback_query_handler to crash on every button press.
-if sys.version_info >= (3, 14):
-    try:
-        import pyromod.types.identifier as _pyromod_id
-        
-        # Patch the Identifier class to have __annotations__ at class level
-        if not hasattr(_pyromod_id.Identifier, '__annotations__'):
-            _pyromod_id.Identifier.__annotations__ = {}
-        
-        # Also patch count_populated method
-        _orig_count_populated = _pyromod_id.Identifier.count_populated
-        
-        def _patched_count_populated(self):
-            # Collect __annotations__ from the class hierarchy
-            class_annotations = {}
-            for klass in reversed(type(self).__mro__):
-                class_annotations.update(
-                    vars(klass).get('__annotations__', {})
-                )
-            # Temporarily set instance __annotations__
-            saved = self.__dict__.get('__annotations__')
-            self.__dict__['__annotations__'] = class_annotations
-            try:
-                return _orig_count_populated(self)
-            finally:
-                if saved is None:
-                    self.__dict__.pop('__annotations__', None)
-                else:
-                    self.__dict__['__annotations__'] = saved
-        
-        _pyromod_id.Identifier.count_populated = _patched_count_populated
-        
-        # Patch matches method as well
-        _orig_matches = _pyromod_id.Identifier.matches
-        
-        def _patched_matches(self, update):
-            class_annotations = {}
-            for klass in reversed(type(self).__mro__):
-                class_annotations.update(
-                    vars(klass).get('__annotations__', {})
-                )
-            saved = self.__dict__.get('__annotations__')
-            self.__dict__['__annotations__'] = class_annotations
-            try:
-                return _orig_matches(self, update)
-            finally:
-                if saved is None:
-                    self.__dict__.pop('__annotations__', None)
-                else:
-                    self.__dict__['__annotations__'] = saved
-        
-        _pyromod_id.Identifier.matches = _patched_matches
-        
-    except Exception as e:
-        print(f"Warning: Could not patch pyromod for Python 3.14: {e}")
-        pass
-
 import requests
+import asyncio
 import aiohttp
 import json
 import zipfile
@@ -78,7 +11,9 @@ from Crypto.Util.Padding import pad, unpad
 import os
 import base64
 from pyrogram import Client, filters
+import sys
 import re
+import requests
 import uuid
 import random
 import string
@@ -106,79 +41,65 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 
 # Bot credentials from environment variables (Render compatible)
-API_ID = int(os.environ.get("API_ID", 10170481))
-API_HASH = os.environ.get("API_HASH", "22dd74455eb31c9aca628c3008580142")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8433886804:AAGyxrEGWE8sL7nbeNHUJW07zINBoIFIBls")
+API_ID = int(os.environ.get("API_ID", 24473318))
+API_HASH = os.environ.get("API_HASH", "e7dd0576c5ac0ff8f90971d6bb04c8f5")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8034069514:AAHUBpzSCq41jPwsJkDbXuEoVC_yCxzyuw0")
 
 # Initialize Bot Globally (IMPORTANT FIX)
 bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
+# Flask app for Render
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    app.run(host="0.0.0.0", port=1000) #Use 8080 Port here, if you're deploying it on koyeb
+    
+
 image_list = [
-    "https://i.ibb.co/0p3pmkwn/Angel.jpg",
-    "https://i.ibb.co/KjNBPrtk/STRANGER-BOY.jpg",
-    "https://i.ibb.co/ccV44ZRS/STRANGER-BOY.jpg",
-    "https://i.ibb.co/HffWwnB7/STRANGER-BOY.jpg",
-    "https://i.ibb.co/cV4W8BQ/STRANGER-BOY.jpg",
-    "https://i.ibb.co/5NgcXjR/STRANGER-BOY.jpg",
-    "https://i.ibb.co/HLFvQJd6/STRANGER-BOY.jpg",
-    "https://i.ibb.co/dsw2rr27/STRANGER-BOY.jpg",
-    "https://i.ibb.co/mCbS89dv/STRANGER-BOY.jpg",
-    "https://i.ibb.co/CsTdxj4r/STRANGER-BOY.jpg",
-    "https://i.ibb.co/GXrkX7c/STRANGER-BOY.jpg",
-    "https://i.ibb.co/KpbdvnMG/STRANGER-BOY.jpg",
-    "https://i.ibb.co/CNRcXKZ/STRANGER-BOY.jpg",
-    "https://i.ibb.co/CpCGzDfz/STRANGER-BOY.jpg",
-    "https://i.ibb.co/xSr3Pt8s/photo-2025-04-23-09-49-45-7496450714600734724.jpg",
-    "https://i.ibb.co/7J3WRJb3/photo-2025-04-14-13-58-22-7496450710305767480.jpg",
-    "https://i.ibb.co/sd1BMMJR/photo-2025-04-14-13-58-25-7496450706010800144.jpg",
-    "https://i.ibb.co/VY5Bb44T/photo-2025-04-23-09-49-54-7496450701715832900.jpg",
-    "https://i.ibb.co/V8MRDLw/photo-2025-04-23-09-49-57-7496450693125898268.jpg",
-    "https://i.ibb.co/bg9w4H3c/photo-2025-04-23-09-50-06-7496450663061127228.jpg",
-    "https://i.ibb.co/zHDXdtCk/photo-2025-04-14-13-58-31-7496450675946029068.jpg",
-    "https://i.ibb.co/200yz6vQ/photo-2025-04-14-13-58-28-7496450658766159936.jpg",
-    "https://i.ibb.co/DgRpQhw6/photo-2025-04-30-11-42-22-7499070258104238100.jpg",
-    "https://i.ibb.co/Swd0WDW9/photo-2025-05-09-20-09-39-7502540716233457668.jpg",
-    "https://i.ibb.co/hxQ73ZYw/photo-2025-04-12-18-46-28-7492500010408345604.jpg",
-    "https://i.ibb.co/jvQfvnCs/photo-2025-04-12-18-46-58-7492500195091939332.jpg",
-    "https://i.ibb.co/1YjMPGgZ/photo-2025-04-12-18-52-23-7492501513646899244.jpg",
-    "https://i.ibb.co/dwc7VnGQ/photo-2025-04-17-12-32-29-7494259035739258904.jpg",
+"https://graph.org/file/8b1f4146a8d6b43e5b2bc-be490579da043504d5.jpg",
+"https://graph.org/file/b75dab2b3f7eaff612391-282aa53538fd3198d4.jpg",
+"https://graph.org/file/38de0b45dd9144e524a33-0205892dd05593774b.jpg",
+"https://graph.org/file/be39f0eebb9b66d7d6bc9-59af2f46a4a8c510b7.jpg",
+"https://graph.org/file/8b7e3d10e362a2850ba0a-f7c7c46e9f4f50b10b.jpg",
 ]
 print(4321)
 
 
 @bot.on_message(filters.command(["start"]))
 async def start(bot, message):
-    random_image_url = random.choice(image_list)
+  random_image_url = random.choice(image_list)
 
-    keyboard = [
-        [
-            InlineKeyboardButton("🧧 STRANGER BOYS 🧧", url="https://t.me/+aBB53vou0Z5hZWI1")
-        ],
-        [
-            InlineKeyboardButton("🌸 🎉Physics Wallah🎉 BOYS 🌸", callback_data="pwwp")
-        ],
-        [
-            InlineKeyboardButton("🌼 Classplus STRANGER 🌼", callback_data="cpwp")
-        ],
-        [
-            InlineKeyboardButton("🌷 Appx समय यात्री 🌷", callback_data="appxwp")
-        ],
-        [
-            InlineKeyboardButton("✨️ समय यात्री ✨️", url="https://t.me/+jjYZLW4sTmIwOTdl")
-        ],
+  keyboard = [
+    [
+      InlineKeyboardButton("🚀 Physics Wallah without Purchase 🚀", callback_data="pwwp")
+    ],
+    [
+      InlineKeyboardButton("📘 Classplus without Purchase 📘", callback_data="cpwp")
+    ],
+    [
+      InlineKeyboardButton("📒 Appx Without Purchase 📒", callback_data="appxwp")
     ]
+  ]
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
+  reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await message.reply_photo(
-        photo=random_image_url,
-        caption="**❖────[『 WELCOME STRANGER 』](https://i.ibb.co/0p3pmkwn/Angel.jpg)────❖**",
-        quote=True,
-        reply_markup=reply_markup
-    )
-
-
+  await message.reply_photo(
+    photo=random_image_url,
+    caption="**PLEASE👇PRESS👇HERE**",
+    quote=True,
+    reply_markup=reply_markup
+  )
 @bot.on_message(group=2)
+#async def account_login(bot: Client, m: Message):
+#    try:
+#        await bot.forward_messages(chat_id=chat_id, from_chat_id=m.chat.id, message_ids=m.id)
+#    except:
+#        pass
+        
 async def fetch_pwwp_data(session: aiohttp.ClientSession, url: str, headers: Dict = None, params: Dict = None, data: Dict = None, method: str = 'GET') -> Any:
     max_retries = 3
     for attempt in range(max_retries):
@@ -211,10 +132,12 @@ async def process_pwwp_chapter_content(session: aiohttp.ClientSession, chapter_i
             if video_details:
                 name = data_item.get('topic', '')
                 videoUrl = video_details.get('videoUrl') or video_details.get('embedCode') or ""
+            #    image = video_details.get('image', "")
 
                 if videoUrl:
                     line = f"{name}:{videoUrl}"
                     content.append(line)
+               #     logging.info(line)
 
         elif content_type in ("notes", "DppNotes"):
             homework_ids = data_item.get('homeworkIds', [])
@@ -226,6 +149,7 @@ async def process_pwwp_chapter_content(session: aiohttp.ClientSession, chapter_i
                     if url:
                         line = f"{name}:{url}"
                         content.append(line)
+                    #    logging.info(line)
 
         return {content_type: content} if content else {}
     else:
@@ -331,8 +255,8 @@ async def process_pwwp_subject(session: aiohttp.ClientSession, subject: Dict, se
                 all_urls.extend(content)
     all_subject_urls[subject_name] = all_urls
 
-
 def find_pw_old_batch(batch_search):
+
     try:
         response = requests.get(f"https://abhiguru143.github.io/AS-MULTIVERSE-PW/batch/batch.json")
         response.raise_for_status()
@@ -351,8 +275,8 @@ def find_pw_old_batch(batch_search):
 
     return matching_batches
 
-
 async def get_pwwp_todays_schedule_content_details(session: aiohttp.ClientSession, selected_batch_id, subject_id, schedule_id, headers: Dict) -> List[str]:
+
     url = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/subject/{subject_id}/schedule/{schedule_id}/schedule-details"
     data = await fetch_pwwp_data(session, url, headers)
     content = []
@@ -363,23 +287,28 @@ async def get_pwwp_todays_schedule_content_details(session: aiohttp.ClientSessio
         video_details = data_item.get('videoDetails', {})
         if video_details:
             name = data_item.get('topic')
+            
             videoUrl = video_details.get('videoUrl') or video_details.get('embedCode')
             image = video_details.get('image')
                 
             if videoUrl:
                 line = f"{name}:{videoUrl}\n"
                 content.append(line)
+           #     logging.info(line)
+               
                           
         homework_ids = data_item.get('homeworkIds')
         for homework in homework_ids:
             attachment_ids = homework.get('attachmentIds')
             name = homework.get('topic')
             for attachment in attachment_ids:
+            
                 url = attachment.get('baseUrl', '') + attachment.get('key', '')
                         
                 if url:
                     line = f"{name}:{url}\n"
                     content.append(line)
+                #    logging.info(line)
                 
         dpp = data_item.get('dpp')
         if dpp:
@@ -388,17 +317,19 @@ async def get_pwwp_todays_schedule_content_details(session: aiohttp.ClientSessio
                 attachment_ids = homework.get('attachmentIds')
                 name = homework.get('topic')
                 for attachment in attachment_ids:
+                
                     url = attachment.get('baseUrl', '') + attachment.get('key', '')
                         
                     if url:
                         line = f"{name}:{url}\n"
                         content.append(line)
+                    #    logging.info(line)
     else:
         logging.warning(f"No Data Found For  Id - {schedule_id}")
     return content
     
-
 async def get_pwwp_all_todays_schedule_content(session: aiohttp.ClientSession, selected_batch_id: str, headers: Dict) -> List[str]:
+
     url = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/todays-schedule"
     todays_schedule_details = await fetch_pwwp_data(session, url, headers)
     all_content = []
@@ -422,8 +353,7 @@ async def get_pwwp_all_todays_schedule_content(session: aiohttp.ClientSession, s
         logging.warning("No today's schedule data found.")
 
     return all_content
-
-
+    
 @bot.on_callback_query(filters.regex("^pwwp$"))
 async def pwwp_callback(bot, callback_query):
     user_id = callback_query.from_user.id
@@ -439,20 +369,16 @@ async def pwwp_callback(bot, callback_query):
             
     THREADPOOL.submit(asyncio.run, process_pwwp(bot, callback_query.message, user_id))
 
-
 async def process_pwwp(bot: Client, m: Message, user_id: int):
-    editable = await m.reply_text("**Enter Working Access Token\n\nOR\n\nEnter Phone Number**")
+
+    editable = await m.reply_text("**Enter Woking Access Token\n\nOR\n\nEnter Phone Number**")
 
     try:
         input1 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
         raw_text1 = input1.text
         await input1.delete(True)
-    except ListenerTimeout:
+    except:
         await editable.edit("**Timeout! You took too long to respond**")
-        return
-    except Exception as e:
-        logging.exception(f"Error in input1: {e}")
-        await editable.edit(f"**Error: {e}**")
         return
 
     headers = {
@@ -465,8 +391,9 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
         'content-type': 'application/json; charset=utf-8',
     }
 
-    CONNECTOR = aiohttp.TCPConnector(limit=1000)
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    loop = asyncio.get_event_loop()    
+    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             if raw_text1.isdigit() and len(raw_text1) == 10:
                 phone = raw_text1
@@ -488,12 +415,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     input2 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                     otp = input2.text
                     await input2.delete(True)
-                except ListenerTimeout:
+                except:
                     await editable.edit("**Timeout! You took too long to respond**")
-                    return
-                except Exception as e:
-                    logging.exception(f"Error in input2: {e}")
-                    await editable.edit(f"**Error: {e}**")
                     return
 
                 payload = {
@@ -539,12 +462,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                 input3 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 batch_search = input3.text
                 await input3.delete(True)
-            except ListenerTimeout:
+            except:
                 await editable.edit("**Timeout! You took too long to respond**")
-                return
-            except Exception as e:
-                logging.exception(f"Error in input3: {e}")
-                await editable.edit(f"**Error: {e}**")
                 return
                 
             url = f"https://api.penpencil.co/v3/batches/search?name={batch_search}"
@@ -562,12 +481,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     input4 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                     raw_text4 = input4.text
                     await input4.delete(True)
-                except ListenerTimeout:
+                except:
                     await editable.edit("**Timeout! You took too long to respond**")
-                    return
-                except Exception as e:
-                    logging.exception(f"Error in input4: {e}")
-                    await editable.edit(f"**Error: {e}**")
                     return
                 
                 if input4.text.isdigit() and 1 <= int(input4.text) <= len(courses):
@@ -592,12 +507,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                             input5 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                             raw_text5 = input5.text
                             await input5.delete(True)
-                        except ListenerTimeout:
+                        except:
                             await editable.edit("**Timeout! You took too long to respond**")
-                            return
-                        except Exception as e:
-                            logging.exception(f"Error in input5: {e}")
-                            await editable.edit(f"**Error: {e}**")
                             return
                 
                         if input5.text.isdigit() and 1 <= int(input5.text) <= len(courses):
@@ -723,7 +634,6 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
             if session:
                 await session.close()
             await CONNECTOR.close()
-
             
 async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.ClientSession, headers: Dict[str, str]) -> str | None:
     MAX_RETRIES = 3
@@ -737,6 +647,7 @@ async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.Client
                 return signed_url
                 
         except Exception as e:
+         #   logging.exception(f"Unexpected error fetching signed URL for {name}: {e}. Attempt {attempt + 1}/{MAX_RETRIES}")
             pass
 
         if attempt < MAX_RETRIES - 1:
@@ -744,7 +655,6 @@ async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.Client
 
     logging.error(f"Failed to fetch signed URL for {name} after {MAX_RETRIES} attempts.")
     return None
-
 
 async def process_cpwp_url(url_val: str, name: str, session: aiohttp.ClientSession, headers: Dict[str, str]) -> str | None:
     try:
@@ -754,13 +664,16 @@ async def process_cpwp_url(url_val: str, name: str, session: aiohttp.ClientSessi
             return None
 
         if "testbook.com" in url_val or "classplusapp.com/drm" in url_val or "media-cdn.classplusapp.com/drm" in url_val:
+        #    logging.info(f"{name}:{url_val}")
             return f"{name}:{url_val}\n"
 
         async with session.get(signed_url) as response:
             response.raise_for_status()
+       #     logging.info(f"{name}:{url_val}")
             return f"{name}:{url_val}\n"
             
     except Exception as e:
+    #    logging.exception(f"Unexpected error processing {name}: {e}")
         pass
     return None
 
@@ -806,7 +719,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                         identifier = url_val.split('/')[-2]
                         url_val = f'https://media-cdn.classplusapp.com/tencent/{identifier}/master.m3u8'
                     elif "4b06bf8d61c41f8310af9b2624459378203740932b456b07fcf817b737fbae27" in url_val and url_val.endswith('.jpeg'):
-                        url_val = f'https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{url_val.split("/")[-1].split(".")[0]}/master.m3u8'
+                        url_val = f'https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{url_val.split('/')[-1].split('.')[0]}/master.m3u8'
                     elif "cpvideocdn.testbook.com" in url_val and url_val.endswith('.png'):
                         match = re.search(r'/streams/([a-f0-9]{24})/', url_val)
                         video_id = match.group(1) if match else url_val.split('/')[-2]
@@ -831,6 +744,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                         url_val: str | None = content.get('url')
                         if url_val:
                             fetched_urls.add(url_val)
+                        #    logging.info(f"{name}:{url_val}")
                             results.append(f"{name}:{url_val}\n")
                             if url_val.endswith('.pdf'):
                                 pdf_count += 1
@@ -863,6 +777,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
             if nested_results:
                 results.extend(nested_results)
             else:
+            #    logging.warning(f"get_cpwp_course_content returned None for folder_id {folder_id}")
                 pass
             video_count += nested_video_count
             pdf_count += nested_pdf_count
@@ -871,8 +786,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
             logging.error(f"Error processing folder {folder_id}: {e}")
 
     return results, video_count, pdf_count, image_count
-
-
+    
 @bot.on_callback_query(filters.regex("^cpwp$"))
 async def cpwp_callback(bot, callback_query):
     user_id = callback_query.from_user.id
@@ -888,7 +802,6 @@ async def cpwp_callback(bot, callback_query):
             
     THREADPOOL.submit(asyncio.run, process_cpwp(bot, callback_query.message, user_id))
     
-
 async def process_cpwp(bot: Client, m: Message, user_id: int):
     
     headers = {
@@ -907,8 +820,9 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
         'webengage-luid' : '00000187-6fe4-5d41-a530-26186858be4c'
     }
 
-    CONNECTOR = aiohttp.TCPConnector(limit=1000)
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    loop = asyncio.get_event_loop()
+    CONNECTOR = aiohttp.TCPConnector(limit=1000, loop=loop)
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             editable = await m.reply_text("**Enter ORG Code Of Your Classplus App**")
             
@@ -1435,7 +1349,6 @@ async def process_folder_wise_course_0(session, api, selected_batch_id, headers,
 
     return all_outputs
 
-
 async def process_folder_wise_course_1(session, api, selected_batch_id, headers, user_id):
     logging.info(f"User ID: {user_id} - Processing folder-wise course 1")
     res = await fetch_appx_html_to_json(session, f"{api}/get/folder_contentsv2?course_id={selected_batch_id}&parent_id=-1", headers)
@@ -1518,9 +1431,10 @@ async def appxwp_callback(bot, callback_query):
 
 async def process_appxwp(bot: Client, m: Message, user_id: int):
 
-    CONNECTOR = aiohttp.TCPConnector(limit=100)
+    loop = asyncio.get_event_loop()
+    CONNECTOR = aiohttp.TCPConnector(limit=100, loop=loop)
 
-    async with aiohttp.ClientSession(connector=CONNECTOR) as session:
+    async with aiohttp.ClientSession(connector=CONNECTOR, loop=loop) as session:
         try:
             editable = await m.reply_text("**Enter App Name Or Api**")
 
@@ -1528,12 +1442,8 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 input1 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 api = input1.text
                 await input1.delete(True)
-            except ListenerTimeout:
+            except:
                 await editable.edit("**Timeout! You took too long to respond**")
-                return
-            except Exception as e:
-                logging.exception(f"Error in input1: {e}")
-                await editable.edit(f"**Error: {e}**")
                 return
 
             if not (api.startswith("http://") or api.startswith("https://")):
@@ -1556,12 +1466,8 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                         input2 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                         raw_text2 = input2.text
                         await input2.delete(True)
-                    except ListenerTimeout:
+                    except:
                         await editable.edit("**Timeout! You took too long to respond**")
-                        return
-                    except Exception as e:
-                        logging.exception(f"Error in input2: {e}")
-                        await editable.edit(f"**Error: {e}**")
                         return
                 
                     if input2.text.isdigit() and 1 <= int(input2.text) <= len(matches):
@@ -1588,6 +1494,8 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 'Accept-Encoding': "gzip",
                 'client-service': "Appx",
                 'auth-key': "appxapi",
+         #       'user-id': userid,
+         #       'authorization': token,
                 'user_app_category': "",
                 'language': "en",
                 'device_type': "ANDROID"
@@ -1653,12 +1561,8 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 input5 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 raw_text5 = input5.text
                 await input5.delete(True)
-            except ListenerTimeout:
+            except:
                 await editable.edit("**Timeout! You took too long to respond**")
-                return
-            except Exception as e:
-                logging.exception(f"Error in input5: {e}")
-                await editable.edit(f"**Error: {e}**")
                 return
                 
             if input5.text.isdigit() and 1 <= int(input5.text) <= len(courses):
@@ -1760,22 +1664,10 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 await session.close()
             await CONNECTOR.close()
 
-# ─── Flask keep-alive server for Render ───────────────────────────────────────
-flask_app = Flask(__name__)
-
-@flask_app.route('/')
-def index():
-    return 'Bot is running!'
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8000))
-    flask_app.run(host="0.0.0.0", port=port)
-
-# Start Flask in background thread so Render detects open port
-threading.Thread(target=run_flask, daemon=True).start()
-# ──────────────────────────────────────────────────────────────────────────────
-
 
 # Start Flask + Bot
 if __name__ == "__main__":
+    threading.Thread(target=run_flask).start()
     bot.run()
+                                        
+

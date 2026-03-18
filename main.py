@@ -30,7 +30,7 @@ import threading
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import FloodWait
 from pyromod import listen
-from pyromod.exceptions.listener_timeout import ListenerTimeout
+from asyncio import TimeoutError as ListenerTimeout
 from pyrogram.types import Message
 import pyrogram
 from pyrogram.types import User, Message

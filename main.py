@@ -94,7 +94,7 @@ async def start(bot, message):
 
   keyboard = [
     [
-      InlineKeyboardButton("🌚 Physics Wallah without Purchase 🌚", callback_data="pwwp")
+      InlineKeyboardButton("🚀 Physics Wallah without Purchase 🚀", callback_data="pwwp")
     ],
     [
       InlineKeyboardButton("📘 Classplus without Purchase 📘", callback_data="cpwp")
@@ -516,7 +516,8 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     return
 
             else:
-                access_token = raw_text1
+                # FIX: Strip whitespace — Telegram se token paste karne pe trailing spaces aa jaate hain
+                access_token = raw_text1.strip()
             
             # Authorization header — proper casing (databasepw.py Section 11)
             headers['Authorization'] = f"Bearer {access_token}"
@@ -527,10 +528,17 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
             }
             try:
                 async with session.get("https://api.penpencil.co/v3/batches/all-purchased-batches", headers=headers, params=params) as response:
-                    response.raise_for_status()
-                    batches = (await response.json()).get("data", [])
+                    resp_json_batches = await response.json()
+                    if response.status in (401, 403):
+                        await safe_edit(editable, f"**Token Invalid/Expired (HTTP {response.status})\nEnter Working Token OR Login With Phone Number**")
+                        return
+                    if response.status != 200:
+                        await safe_edit(editable, f"**API Error : HTTP {response.status}\n{resp_json_batches.get('message', 'Unknown error')}**")
+                        return
+                    batches = resp_json_batches.get("data", [])
             except Exception as e:
-                await safe_edit(editable, "**```\nLogin Failed❗TOKEN IS EXPIRED```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
+                # FIX: Actual error dikhao — hardcoded "TOKEN IS EXPIRED" nahi
+                await safe_edit(editable, f"**Login Failed\nActual Error : `{e}`\n\nEnter Working Token OR Login With Phone Number**")
                 return
         
             await editable.edit("**Enter Your Batch Name**")

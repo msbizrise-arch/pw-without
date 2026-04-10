@@ -1,5 +1,72 @@
-import requests
 import asyncio
+import sys
+
+# Fix for Python 3.10+: create event loop before pyrogram import
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+# Fix for Python 3.14+: pyromod Identifier.__annotations__ compatibility
+# In Python 3.14, instance __annotations__ is no longer auto-created,
+# causing pyromod callback_query_handler to crash on every button press.
+if sys.version_info >= (3, 14):
+    try:
+        import pyromod.types.identifier as _pyromod_id
+        
+        # Patch the Identifier class to have __annotations__ at class level
+        if not hasattr(_pyromod_id.Identifier, '__annotations__'):
+            _pyromod_id.Identifier.__annotations__ = {}
+        
+        # Also patch count_populated method
+        _orig_count_populated = _pyromod_id.Identifier.count_populated
+        
+        def _patched_count_populated(self):
+            # Collect __annotations__ from the class hierarchy
+            class_annotations = {}
+            for klass in reversed(type(self).__mro__):
+                class_annotations.update(
+                    vars(klass).get('__annotations__', {})
+                )
+            # Temporarily set instance __annotations__
+            saved = self.__dict__.get('__annotations__')
+            self.__dict__['__annotations__'] = class_annotations
+            try:
+                return _orig_count_populated(self)
+            finally:
+                if saved is None:
+                    self.__dict__.pop('__annotations__', None)
+                else:
+                    self.__dict__['__annotations__'] = saved
+        
+        _pyromod_id.Identifier.count_populated = _patched_count_populated
+        
+        # Patch matches method as well
+        _orig_matches = _pyromod_id.Identifier.matches
+        
+        def _patched_matches(self, update):
+            class_annotations = {}
+            for klass in reversed(type(self).__mro__):
+                class_annotations.update(
+                    vars(klass).get('__annotations__', {})
+                )
+            saved = self.__dict__.get('__annotations__')
+            self.__dict__['__annotations__'] = class_annotations
+            try:
+                return _orig_matches(self, update)
+            finally:
+                if saved is None:
+                    self.__dict__.pop('__annotations__', None)
+                else:
+                    self.__dict__['__annotations__'] = saved
+        
+        _pyromod_id.Identifier.matches = _patched_matches
+        
+    except Exception as e:
+        print(f"Warning: Could not patch pyromod for Python 3.14: {e}")
+        pass
+
+import requests
 import aiohttp
 import json
 import zipfile
@@ -10,29 +77,22 @@ from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 import os
 import base64
-
-# Fix: Ensure event loop exists before importing pyrogram (Python 3.10+ compatibility)
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
 from pyrogram import Client, filters
-import sys
 import re
-import requests
 import uuid
 import random
 import string
 import hashlib
 from flask import Flask
 import threading
+from pyrogram.types.messages_and_media import message
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.errors import FloodWait
 from pyromod import listen
-from asyncio import TimeoutError as ListenerTimeout
+from pyromod.exceptions.listener_timeout import ListenerTimeout
 from pyrogram.types import Message
 import pyrogram
+from pyrogram import Client, filters
 from pyrogram.types import User, Message
 from pyrogram.enums import ChatMemberStatus
 from pyrogram.raw.functions.channels import GetParticipants
@@ -44,215 +104,182 @@ THREADPOOL = ThreadPoolExecutor(max_workers=1000)
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def generate_random_id() -> str:
-    """Dynamic unique Randomid — har request ke liye fresh (databasepw.py se)"""
-    return str(uuid.uuid4())[:18]
-
-async def safe_edit(message, text: str, **kwargs):
-    """MESSAGE_NOT_MODIFIED error handle karo — same content pe edit skip karo"""
-    try:
-        return await message.edit(text, **kwargs)
-    except Exception as e:
-        if "MESSAGE_NOT_MODIFIED" in str(e):
-            return message  # silently skip
-        raise  # baaki errors propagate karo
-
 
 # Bot credentials from environment variables (Render compatible)
-API_ID = int(os.environ.get("API_ID", 38498066))
-API_HASH = os.environ.get("API_HASH", "c9696114751feacdeb1b4487f5839a1a")
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8534420363:AAGFsIzriIXeMGWTeprqEBG5zzLSU09ZqZk")
+API_ID = int(os.environ.get("API_ID", 10170481))
+API_HASH = os.environ.get("API_HASH", "22dd74455eb31c9aca628c3008580142")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8433886804:AAGyxrEGWE8sL7nbeNHUJW07zINBoIFIBls")
 
 # Initialize Bot Globally (IMPORTANT FIX)
 bot = Client("bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Flask app for Render
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_flask():
-    port = int(os.environ.get("PORT", 1000))
-    app.run(host="0.0.0.0", port=port)
-    
-
 image_list = [
-"https://graph.org/file/a7defa3fc5af14e1ef64d-6aaf13e93fca95cfb2.jpg",
-"https://graph.org/file/0477971c295c3ece935ef-2af948bd4f14c6d1da.jpg",
-"https://graph.org/file/9664850ce3c6ebaa5007e-e812fa25118aa1a1d7.jpg",
-"https://graph.org/file/b7466fa9700260aab4f77-a48f2b54d2f8328112.jpg",
-"https://graph.org/file/2eb3c7ed975b9f9dffaa5-9b991b04b9478b1026.jpg",
-"https://graph.org/file/e5cbc501850bf1c4351f6-2e913a534c92f5f5f8.jpg",
-"https://graph.org/file/b48abf3696926fd6f36b3-9e1be53031a43a444d.jpg",
+    "https://i.ibb.co/0p3pmkwn/Angel.jpg",
+    "https://i.ibb.co/KjNBPrtk/STRANGER-BOY.jpg",
+    "https://i.ibb.co/ccV44ZRS/STRANGER-BOY.jpg",
+    "https://i.ibb.co/HffWwnB7/STRANGER-BOY.jpg",
+    "https://i.ibb.co/cV4W8BQ/STRANGER-BOY.jpg",
+    "https://i.ibb.co/5NgcXjR/STRANGER-BOY.jpg",
+    "https://i.ibb.co/HLFvQJd6/STRANGER-BOY.jpg",
+    "https://i.ibb.co/dsw2rr27/STRANGER-BOY.jpg",
+    "https://i.ibb.co/mCbS89dv/STRANGER-BOY.jpg",
+    "https://i.ibb.co/CsTdxj4r/STRANGER-BOY.jpg",
+    "https://i.ibb.co/GXrkX7c/STRANGER-BOY.jpg",
+    "https://i.ibb.co/KpbdvnMG/STRANGER-BOY.jpg",
+    "https://i.ibb.co/CNRcXKZ/STRANGER-BOY.jpg",
+    "https://i.ibb.co/CpCGzDfz/STRANGER-BOY.jpg",
+    "https://i.ibb.co/xSr3Pt8s/photo-2025-04-23-09-49-45-7496450714600734724.jpg",
+    "https://i.ibb.co/7J3WRJb3/photo-2025-04-14-13-58-22-7496450710305767480.jpg",
+    "https://i.ibb.co/sd1BMMJR/photo-2025-04-14-13-58-25-7496450706010800144.jpg",
+    "https://i.ibb.co/VY5Bb44T/photo-2025-04-23-09-49-54-7496450701715832900.jpg",
+    "https://i.ibb.co/V8MRDLw/photo-2025-04-23-09-49-57-7496450693125898268.jpg",
+    "https://i.ibb.co/bg9w4H3c/photo-2025-04-23-09-50-06-7496450663061127228.jpg",
+    "https://i.ibb.co/zHDXdtCk/photo-2025-04-14-13-58-31-7496450675946029068.jpg",
+    "https://i.ibb.co/200yz6vQ/photo-2025-04-14-13-58-28-7496450658766159936.jpg",
+    "https://i.ibb.co/DgRpQhw6/photo-2025-04-30-11-42-22-7499070258104238100.jpg",
+    "https://i.ibb.co/Swd0WDW9/photo-2025-05-09-20-09-39-7502540716233457668.jpg",
+    "https://i.ibb.co/hxQ73ZYw/photo-2025-04-12-18-46-28-7492500010408345604.jpg",
+    "https://i.ibb.co/jvQfvnCs/photo-2025-04-12-18-46-58-7492500195091939332.jpg",
+    "https://i.ibb.co/1YjMPGgZ/photo-2025-04-12-18-52-23-7492501513646899244.jpg",
+    "https://i.ibb.co/dwc7VnGQ/photo-2025-04-17-12-32-29-7494259035739258904.jpg",
 ]
 print(4321)
 
 
 @bot.on_message(filters.command(["start"]))
 async def start(bot, message):
-  random_image_url = random.choice(image_list)
+    random_image_url = random.choice(image_list)
 
-  keyboard = [
-    [
-      InlineKeyboardButton("🫡Physics Wallah without Purchase🫡", callback_data="pwwp")
-    ],
-    [
-      InlineKeyboardButton("🥹Classplus without Purchase🥹", callback_data="cpwp")
-    ],
-    [
-      InlineKeyboardButton("🫣Appx Without Purchase🫣", callback_data="appxwp")
+    keyboard = [
+        [
+            InlineKeyboardButton("🧧 STRANGER BOYS 🧧", url="https://t.me/+aBB53vou0Z5hZWI1")
+        ],
+        [
+            InlineKeyboardButton("🌸 🎉Physics Wallah🎉 BOYS 🌸", callback_data="pwwp")
+        ],
+        [
+            InlineKeyboardButton("🌼 Classplus STRANGER 🌼", callback_data="cpwp")
+        ],
+        [
+            InlineKeyboardButton("🌷 Appx समय यात्री 🌷", callback_data="appxwp")
+        ],
+        [
+            InlineKeyboardButton("✨️ समय यात्री ✨️", url="https://t.me/+jjYZLW4sTmIwOTdl")
+        ],
     ]
-  ]
 
-  reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
-  await message.reply_photo(
-    photo=random_image_url,
-    caption="**PLEASE👇PRESS👇HERE**",
-    quote=True,
-    reply_markup=reply_markup
-  )
-async def fetch_pwwp_data(
-    session: aiohttp.ClientSession,
-    url: str,
-    headers: Dict = None,
-    params: Dict = None,
-    data: Dict = None,
-    method: str = 'GET'
-) -> Any:
+    await message.reply_photo(
+        photo=random_image_url,
+        caption="**❖────[『 WELCOME STRANGER 』](https://i.ibb.co/0p3pmkwn/Angel.jpg)────❖**",
+        quote=True,
+        reply_markup=reply_markup
+    )
 
+
+@bot.on_message(group=2)
+async def fetch_pwwp_data(session: aiohttp.ClientSession, url: str, headers: Dict = None, params: Dict = None, data: Dict = None, method: str = 'GET') -> Any:
     max_retries = 3
-
     for attempt in range(max_retries):
         try:
-            async with session.request(
-                method,
-                url,
-                headers=headers,
-                params=params,
-                json=data,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-
+            async with session.request(method, url, headers=headers, params=params, json=data) as response:
                 response.raise_for_status()
                 return await response.json()
-
-        except asyncio.TimeoutError:
-            logging.error(f"Attempt {attempt + 1} failed: Timeout fetching {url}")
-
         except aiohttp.ClientError as e:
             logging.error(f"Attempt {attempt + 1} failed: aiohttp error fetching {url}: {e}")
-
         except Exception as e:
             logging.exception(f"Attempt {attempt + 1} failed: Unexpected error fetching {url}: {e}")
 
         if attempt < max_retries - 1:
-            await asyncio.sleep(2)
-
-    logging.error(f"Failed to fetch {url} after {max_retries} attempts.")
-    return None
-    await callback_query.answer()
-
-def pw_append_drm_ids(video_url: str, parent_id: str, child_id: str) -> str:
-    """Video URL mein parentId aur childId append karo — DRM ke liye zaroori."""
-    if parent_id and child_id:
-        return f"{video_url}&parentId={parent_id}&childId={child_id}"
-    elif parent_id:
-        return f"{video_url}&parentId={parent_id}"
-    return video_url
+            await asyncio.sleep(90 ** attempt)
+        else:
+            logging.error(f"Failed to fetch {url} after {max_retries} attempts.")
+            return None
 
 
-async def fetch_pwwp_all_schedule(
-    session: aiohttp.ClientSession,
-    chapter_id, selected_batch_id, subject_id,
-    content_type, headers: Dict
-) -> List[Dict]:
-    """v2/contents API se items fetch karo — pagination handle karta hai."""
-    all_items = []
+async def process_pwwp_chapter_content(session: aiohttp.ClientSession, chapter_id, selected_batch_id, subject_id, schedule_id, content_type, headers: Dict):
+    url = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/subject/{subject_id}/schedule/{schedule_id}/schedule-details"
+    data = await fetch_pwwp_data(session, url, headers=headers)
+    content = []
+
+    if data and data.get("success") and data.get("data"):
+        data_item = data["data"]
+
+        if content_type in ("videos", "DppVideos"):
+            video_details = data_item.get('videoDetails', {})
+            if video_details:
+                name = data_item.get('topic', '')
+                videoUrl = video_details.get('videoUrl') or video_details.get('embedCode') or ""
+
+                if videoUrl:
+                    line = f"{name}:{videoUrl}"
+                    content.append(line)
+
+        elif content_type in ("notes", "DppNotes"):
+            homework_ids = data_item.get('homeworkIds', [])
+            for homework in homework_ids:
+                attachment_ids = homework.get('attachmentIds', [])
+                name = homework.get('topic', '')
+                for attachment in attachment_ids:
+                    url = attachment.get('baseUrl', '') + attachment.get('key', '')
+                    if url:
+                        line = f"{name}:{url}"
+                        content.append(line)
+
+        return {content_type: content} if content else {}
+    else:
+        logging.warning(f"No Data Found For  Id - {schedule_id}")
+        return {}
+
+
+async def fetch_pwwp_all_schedule(session: aiohttp.ClientSession, chapter_id, selected_batch_id, subject_id, content_type, headers: Dict) -> List[Dict]:
+    all_schedule = []
     page = 1
     while True:
-        params = {'tag': chapter_id, 'contentType': content_type, 'page': page}
-        url  = f"https://api.penpencil.co/v2/batches/{selected_batch_id}/subject/{subject_id}/contents"
+        params = {
+            'tag': chapter_id,
+            'contentType': content_type,
+            'page': page
+        }
+        url = f"https://api.penpencil.co/v2/batches/{selected_batch_id}/subject/{subject_id}/contents"
         data = await fetch_pwwp_data(session, url, headers=headers, params=params)
-        if data and data.get('success') and data.get('data'):
-            batch = data['data']
-            if not batch:
-                break
-            for item in batch:
+
+        if data and data.get("success") and data.get("data"):
+            for item in data["data"]:
                 item['content_type'] = content_type
-                all_items.append(item)
+                all_schedule.append(item)
             page += 1
         else:
             break
-    return all_items
+    return all_schedule
 
 
-def pw_extract_item(item: dict, content_type: str) -> list:
-    """
-    v2/contents API ke ek item se URLs nikalo.
-
-    VIDEO (contentType = videos / DppVideos):
-      item['url']                    → cloudfront mpd URL  ← DIRECT
-      item['_id']                    → parentId
-      item['videoDetails']['_id']    → childId
-
-    NOTES (contentType = notes / DppNotes):
-      item['homeworkIds'][n]['attachmentIds'][m]:
-        .baseUrl + .key              → FULL PDF URL  ← CORRECT
-    """
-    lines = []
-    name    = (item.get('topic') or item.get('name') or 'Untitled').strip()
-    item_id = item.get('_id', '')
-
-    if content_type in ('videos', 'DppVideos'):
-        # Video URL v2/contents mein item['url'] mein hota hai directly
-        raw_url = (item.get('url') or '').strip()
-        # Fallback: videoDetails mein bhi check karo
-        if not raw_url:
-            vd = item.get('videoDetails') or {}
-            raw_url = (vd.get('videoUrl') or vd.get('embedCode') or '').strip()
-        if raw_url:
-            vd       = item.get('videoDetails') or {}
-            child_id = (vd.get('_id') or item_id)
-            final    = pw_append_drm_ids(raw_url, item_id, child_id)
-            lines.append(f"{name}:{final}")
-
-    elif content_type in ('notes', 'DppNotes'):
-        # PDF URL homeworkIds > attachmentIds > baseUrl + key
-        for hw in (item.get('homeworkIds') or []):
-            hw_name = (hw.get('topic') or name).strip()
-            for att in (hw.get('attachmentIds') or []):
-                pdf_url = (att.get('baseUrl', '') + att.get('key', '')).strip()
-                if pdf_url and len(pdf_url) > 30:  # valid URL check
-                    lines.append(f"{hw_name}:{pdf_url}")
-
-    return lines
-
-
-async def process_pwwp_chapters(
-    session: aiohttp.ClientSession,
-    chapter_id, selected_batch_id, subject_id, headers: Dict
-) -> dict:
-    """Ek chapter ke saare content types fetch karke combine karo."""
+async def process_pwwp_chapters(session: aiohttp.ClientSession, chapter_id, selected_batch_id, subject_id, headers: Dict):
     content_types = ['videos', 'notes', 'DppNotes', 'DppVideos']
+    
+    all_schedule_tasks = [fetch_pwwp_all_schedule(session, chapter_id, selected_batch_id, subject_id, content_type, headers) for content_type in content_types]
+    all_schedules = await asyncio.gather(*all_schedule_tasks)
+    
+    all_schedule = []
+    for schedule in all_schedules:
+        all_schedule.extend(schedule)
+        
+    content_tasks = [
+        process_pwwp_chapter_content(session, chapter_id, selected_batch_id, subject_id, item["_id"], item['content_type'], headers)
+        for item in all_schedule
+    ]
+    content_results = await asyncio.gather(*content_tasks)
 
-    all_schedules = await asyncio.gather(*[
-        fetch_pwwp_all_schedule(session, chapter_id, selected_batch_id, subject_id, ct, headers)
-        for ct in content_types
-    ])
+    combined_content = {}
+    for result in content_results:
+        if result:
+            for content_type, content_list in result.items():
+                if content_type not in combined_content:
+                    combined_content[content_type] = []
+                combined_content[content_type].extend(content_list)
 
-    combined: dict = {}
-    for items_list in all_schedules:
-        for item in items_list:
-            ct    = item.get('content_type', '')
-            lines = pw_extract_item(item, ct)
-            if lines:
-                if ct not in combined:
-                    combined[ct] = []
-                combined[ct].extend(lines)
-    return combined
+    return combined_content
 
 
 async def get_pwwp_all_chapters(session: aiohttp.ClientSession, selected_batch_id, subject_id, headers: Dict):
@@ -304,8 +331,8 @@ async def process_pwwp_subject(session: aiohttp.ClientSession, subject: Dict, se
                 all_urls.extend(content)
     all_subject_urls[subject_name] = all_urls
 
-def find_pw_old_batch(batch_search):
 
+def find_pw_old_batch(batch_search):
     try:
         response = requests.get(f"https://abhiguru143.github.io/AS-MULTIVERSE-PW/batch/batch.json")
         response.raise_for_status()
@@ -324,53 +351,54 @@ def find_pw_old_batch(batch_search):
 
     return matching_batches
 
-async def get_pwwp_todays_schedule_content_details(
-    session: aiohttp.ClientSession,
-    selected_batch_id, subject_id, schedule_id, headers: Dict
-) -> List[str]:
-    """
-    Today's class ke liye v1/schedule-details use karna padta hai.
-    Videos: videoDetails se URL + DRM ids append
-    Notes:  homeworkIds > attachmentIds > baseUrl+key
-    """
-    url  = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/subject/{subject_id}/schedule/{schedule_id}/schedule-details"
+
+async def get_pwwp_todays_schedule_content_details(session: aiohttp.ClientSession, selected_batch_id, subject_id, schedule_id, headers: Dict) -> List[str]:
+    url = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/subject/{subject_id}/schedule/{schedule_id}/schedule-details"
     data = await fetch_pwwp_data(session, url, headers)
     content = []
 
     if data and data.get("success") and data.get("data"):
         data_item = data["data"]
-        name    = (data_item.get('topic') or 'Untitled').strip()
-        item_id = data_item.get('_id', '') or schedule_id
-
-        # Video
-        vd = data_item.get('videoDetails') or {}
-        raw_url = (vd.get('videoUrl') or vd.get('embedCode') or '').strip()
-        if raw_url:
-            child_id = vd.get('_id', '') or item_id
-            final    = pw_append_drm_ids(raw_url, item_id, child_id)
-            content.append(f"{name}:{final}\n")
-
-        # Notes
-        for hw in (data_item.get('homeworkIds') or []):
-            hw_name = (hw.get('topic') or name).strip()
-            for att in (hw.get('attachmentIds') or []):
-                pdf_url = (att.get('baseUrl', '') + att.get('key', '')).strip()
-                if pdf_url and len(pdf_url) > 30:
-                    content.append(f"{hw_name}:{pdf_url}\n")
-
-        # DPP Notes
-        for hw in ((data_item.get('dpp') or {}).get('homeworkIds') or []):
-            hw_name = (hw.get('topic') or name).strip()
-            for att in (hw.get('attachmentIds') or []):
-                pdf_url = (att.get('baseUrl', '') + att.get('key', '')).strip()
-                if pdf_url and len(pdf_url) > 30:
-                    content.append(f"{hw_name}:{pdf_url}\n")
+        
+        video_details = data_item.get('videoDetails', {})
+        if video_details:
+            name = data_item.get('topic')
+            videoUrl = video_details.get('videoUrl') or video_details.get('embedCode')
+            image = video_details.get('image')
+                
+            if videoUrl:
+                line = f"{name}:{videoUrl}\n"
+                content.append(line)
+                          
+        homework_ids = data_item.get('homeworkIds')
+        for homework in homework_ids:
+            attachment_ids = homework.get('attachmentIds')
+            name = homework.get('topic')
+            for attachment in attachment_ids:
+                url = attachment.get('baseUrl', '') + attachment.get('key', '')
+                        
+                if url:
+                    line = f"{name}:{url}\n"
+                    content.append(line)
+                
+        dpp = data_item.get('dpp')
+        if dpp:
+            dpp_homework_ids = dpp.get('homeworkIds')
+            for homework in dpp_homework_ids:
+                attachment_ids = homework.get('attachmentIds')
+                name = homework.get('topic')
+                for attachment in attachment_ids:
+                    url = attachment.get('baseUrl', '') + attachment.get('key', '')
+                        
+                    if url:
+                        line = f"{name}:{url}\n"
+                        content.append(line)
     else:
-        logging.warning(f"No Data Found For Id - {schedule_id}")
+        logging.warning(f"No Data Found For  Id - {schedule_id}")
     return content
     
-async def get_pwwp_all_todays_schedule_content(session: aiohttp.ClientSession, selected_batch_id: str, headers: Dict) -> List[str]:
 
+async def get_pwwp_all_todays_schedule_content(session: aiohttp.ClientSession, selected_batch_id: str, headers: Dict) -> List[str]:
     url = f"https://api.penpencil.co/v1/batches/{selected_batch_id}/todays-schedule"
     todays_schedule_details = await fetch_pwwp_data(session, url, headers)
     all_content = []
@@ -394,69 +422,47 @@ async def get_pwwp_all_todays_schedule_content(session: aiohttp.ClientSession, s
         logging.warning("No today's schedule data found.")
 
     return all_content
-    
+
+
 @bot.on_callback_query(filters.regex("^pwwp$"))
 async def pwwp_callback(bot, callback_query):
     user_id = callback_query.from_user.id
-    try:
-        await callback_query.answer()
-    except Exception:
-        pass
+    await callback_query.answer()
+    
     auth_user = auth_users[0]
     user = await bot.get_users(auth_user)
-    owner_username = "@" + (user.username if user.username else str(user.id))
+    owner_username = "@" + user.username
+
     if user_id not in auth_users:
         await bot.send_message(callback_query.message.chat.id, f"**You Are Not Subscribed To This Bot\nContact - {owner_username}**")
         return
-    asyncio.ensure_future(process_pwwp(bot, callback_query.message, user_id))
+            
+    THREADPOOL.submit(asyncio.run, process_pwwp(bot, callback_query.message, user_id))
+
 
 async def process_pwwp(bot: Client, m: Message, user_id: int):
-
-    editable = await m.reply_text("**Enter Woking Access Token\n\nOR\n\nEnter Phone Number**")
+    editable = await m.reply_text("**Enter Working Access Token\n\nOR\n\nEnter Phone Number**")
 
     try:
         input1 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
         raw_text1 = input1.text
         await input1.delete(True)
-    except:
+    except ListenerTimeout:
         await editable.edit("**Timeout! You took too long to respond**")
         return
+    except Exception as e:
+        logging.exception(f"Error in input1: {e}")
+        await editable.edit(f"**Error: {e}**")
+        return
 
-    # OTP Headers (databasepw.py Section 3 — OTP_HEADERS)
-    otp_headers = {
-        'Content-Type'     : 'application/json',
-        'Client-Id'        : '5eb393ee95fab7468a79d189',
-        'Client-Type'      : 'WEB',
-        'Client-Version'   : '2.6.12',
-        'Integration-With' : 'Origin',
-    }
-
-    # Token Headers (databasepw.py Section 3 — TOKEN_HEADERS)
-    token_headers = {
-        'Content-Type'     : 'application/json',
-        'Client-Id'        : '5eb393ee95fab7468a79d189',
-        'Client-Type'      : 'WEB',
-        'Client-Version'   : '2.6.12',
-        'Integration-With' : '',
-        'Randomid'         : generate_random_id(),
-        'Referer'          : 'https://www.pw.live/',
-        'User-Agent'       : (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
-        ),
-    }
-
-    # General headers — all PW API calls after login (databasepw.py Section 11)
     headers = {
-        'Content-Type'   : 'application/json',
-        'Client-Id'      : '5eb393ee95fab7468a79d189',
-        'Client-Type'    : 'WEB',
-        'Client-Version' : '2.6.12',
-        'Randomid'       : generate_random_id(),
-        'User-Agent'     : (
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-            'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
-        ),
+        'Host': 'api.penpencil.co',
+        'client-id': '5eb393ee95fab7468a79d189',
+        'client-version': '1910',
+        'user-agent': 'Mozilla/5.0 (Linux; Android 12; M2101K6P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Mobile Safari/537.36',
+        'randomid': '72012511-256c-4e1c-b4c7-29d67136af37',
+        'client-type': 'WEB',
+        'content-type': 'application/json; charset=utf-8',
     }
 
     CONNECTOR = aiohttp.TCPConnector(limit=1000)
@@ -470,22 +476,11 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     "organizationId": "5eb393ee95fab7468a79d189"
                 }
                 try:
-                    async with session.post("https://api.penpencil.co/v1/users/get-otp?smsType=0", json=data, headers=otp_headers) as otp_resp:
-                        # FIX: HTTP 429 = PW rate limit — too many OTP requests
-                        if otp_resp.status == 429:
-                            await safe_edit(editable, "**❌ Too Many OTP Requests!\n\nPW ne rate limit lagaya hai.\nPlease 2-3 minutes wait karo phir try karo.**")
-                            return
-                        if otp_resp.status not in (200, 201):
-                            otp_err = await otp_resp.json()
-                            await safe_edit(editable, f"**❌ OTP Send Failed (HTTP {otp_resp.status})\n{otp_err.get('message', 'Unknown error')}**")
-                            return
-                        resp_data = await otp_resp.json()
-                        if resp_data.get("success") == False:
-                            await safe_edit(editable, f"**❌ OTP Error : {resp_data.get('message', 'OTP send failed')}**")
-                            return
-
+                    async with session.post(f"https://api.penpencil.co/v1/users/get-otp?smsType=0", json=data, headers=headers) as response:
+                        await response.read()
+                    
                 except Exception as e:
-                    await safe_edit(editable, f"**Error sending OTP : {e}**")
+                    await editable.edit(f"**Error : {e}**")
                     return
 
                 editable = await editable.edit("**ENTER OTP YOU RECEIVED**")
@@ -493,8 +488,12 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     input2 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                     otp = input2.text
                     await input2.delete(True)
-                except:
+                except ListenerTimeout:
                     await editable.edit("**Timeout! You took too long to respond**")
+                    return
+                except Exception as e:
+                    logging.exception(f"Error in input2: {e}")
+                    await editable.edit(f"**Error: {e}**")
                     return
 
                 payload = {
@@ -509,76 +508,30 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                 }
 
                 try:
-                    # Fresh Randomid har token request pe (databasepw.py Section 3)
-                    token_headers['Randomid'] = generate_random_id()
-                    async with session.post("https://api.penpencil.co/v3/oauth/token", json=payload, headers=token_headers) as tok_resp:
-                        # FIX: HTTP status check pehle
-                        if tok_resp.status == 429:
-                            await safe_edit(editable, "**❌ Too Many Requests (429)\n\nPW server rate limit.\nPlease 2-3 minutes wait karo phir try karo.**")
-                            return
-                        resp_json = await tok_resp.json()
-                        # FIX: Expanded OTP error detection (isOTPErr — databasepw.py Section 4)
-                        err_str = str(resp_json).lower()
-                        otp_err_keywords = ['invalid otp', 'otp expired', 'wrong otp', 'incorrect otp',
-                                            'otp invalid', 'otp wrong', 'invalid_otp', 'otp not', 'bad otp']
-                        if any(x in err_str for x in otp_err_keywords):
-                            await safe_edit(editable, "**❌ Wrong or Expired OTP\nPlease re-enter phone number and get a new OTP.**")
-                            return
-                        # FIX: success=False check — actual PW message dikhao
-                        if resp_json.get("success") == False or tok_resp.status not in (200, 201):
-                            api_msg = resp_json.get("message") or resp_json.get("error") or f"HTTP {tok_resp.status}"
-                            await safe_edit(editable, f"**❌ Login Failed\nPW API : {api_msg}**")
-                            return
-                        if not resp_json.get("data", {}).get("access_token"):
-                            api_msg = resp_json.get("message", "Token not received from PW")
-                            await safe_edit(editable, f"**❌ Error : {api_msg}**")
-                            return
-                        access_token = resp_json["data"]["access_token"]
-                        await safe_edit(editable, f"<b>Physics Wallah Login Successful ✅</b>\n\n<pre language='Save this Login Token for future usage'>{access_token}</pre>\n\n")
+                    async with session.post(f"https://api.penpencil.co/v3/oauth/token", json=payload, headers=headers) as response:
+                        access_token = (await response.json())["data"]["access_token"]
+                        monster = await editable.edit(f"<b>Physics Wallah Login Successful ✅</b>\n\n<pre language='Save this Login Token for future usage'>{access_token}</pre>\n\n")
                         editable = await m.reply_text("**Getting Batches In Your I'd**")
                     
                 except Exception as e:
-                    await safe_edit(editable, f"**Error : {e}**")
+                    await editable.edit(f"**Error : {e}**")
                     return
 
             else:
-                # FIX: Strip whitespace — Telegram se token paste karne pe trailing spaces aa jaate hain
-                access_token = raw_text1.strip()
+                access_token = raw_text1
             
-            # Authorization header — proper casing (databasepw.py Section 11)
-            headers['Authorization'] = f"Bearer {access_token}"
+            headers['authorization'] = f"Bearer {access_token}"
         
             params = {
                 'mode': '1',
                 'page': '1',
             }
-            # FIX: 429 retry — 2 attempts with 3s delay
-            batches = None
-            for _attempt in range(2):
-                try:
-                    async with session.get("https://api.penpencil.co/v3/batches/all-purchased-batches", headers=headers, params=params) as response:
-                        if response.status == 429:
-                            if _attempt == 0:
-                                await safe_edit(editable, "**⏳ PW Rate Limit (429) — 3 seconds wait karke retry ho raha hai...**")
-                                await asyncio.sleep(3)
-                                continue
-                            else:
-                                await safe_edit(editable, "**❌ PW Rate Limit (429) — Too Many Requests\nPlease 2-3 minutes baad try karo.**")
-                                return
-                        resp_json_batches = await response.json()
-                        if response.status in (401, 403):
-                            await safe_edit(editable, f"**❌ Token Invalid/Expired (HTTP {response.status})\nEnter Working Token OR Login With Phone Number**")
-                            return
-                        if response.status != 200:
-                            api_msg = resp_json_batches.get("message", "Unknown error")
-                            await safe_edit(editable, f"**❌ API Error : HTTP {response.status}\n{api_msg}**")
-                            return
-                        batches = resp_json_batches.get("data", [])
-                        break
-                except Exception as e:
-                    await safe_edit(editable, f"**❌ Login Failed\nError : `{e}`\n\nEnter Working Token OR Login With Phone Number**")
-                    return
-            if batches is None:
+            try:
+                async with session.get(f"https://api.penpencil.co/v3/batches/all-purchased-batches", headers=headers, params=params) as response:
+                    response.raise_for_status()
+                    batches = (await response.json()).get("data", [])
+            except Exception as e:
+                await editable.edit("**```\nLogin Failed❗TOKEN IS EXPIRED```\nPlease Enter Working Token\n                       OR\nLogin With Phone Number**")
                 return
         
             await editable.edit("**Enter Your Batch Name**")
@@ -586,8 +539,12 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                 input3 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 batch_search = input3.text
                 await input3.delete(True)
-            except:
+            except ListenerTimeout:
                 await editable.edit("**Timeout! You took too long to respond**")
+                return
+            except Exception as e:
+                logging.exception(f"Error in input3: {e}")
+                await editable.edit(f"**Error: {e}**")
                 return
                 
             url = f"https://api.penpencil.co/v3/batches/search?name={batch_search}"
@@ -605,8 +562,12 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     input4 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                     raw_text4 = input4.text
                     await input4.delete(True)
-                except:
+                except ListenerTimeout:
                     await editable.edit("**Timeout! You took too long to respond**")
+                    return
+                except Exception as e:
+                    logging.exception(f"Error in input4: {e}")
+                    await editable.edit(f"**Error: {e}**")
                     return
                 
                 if input4.text.isdigit() and 1 <= int(input4.text) <= len(courses):
@@ -631,8 +592,12 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                             input5 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                             raw_text5 = input5.text
                             await input5.delete(True)
-                        except:
+                        except ListenerTimeout:
                             await editable.edit("**Timeout! You took too long to respond**")
+                            return
+                        except Exception as e:
+                            logging.exception(f"Error in input5: {e}")
+                            await editable.edit(f"**Error: {e}**")
                             return
                 
                         if input5.text.isdigit() and 1 <= int(input5.text) <= len(courses):
@@ -758,6 +723,7 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
             if session:
                 await session.close()
             await CONNECTOR.close()
+
             
 async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.ClientSession, headers: Dict[str, str]) -> str | None:
     MAX_RETRIES = 3
@@ -771,7 +737,6 @@ async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.Client
                 return signed_url
                 
         except Exception as e:
-         #   logging.exception(f"Unexpected error fetching signed URL for {name}: {e}. Attempt {attempt + 1}/{MAX_RETRIES}")
             pass
 
         if attempt < MAX_RETRIES - 1:
@@ -779,6 +744,7 @@ async def fetch_cpwp_signed_url(url_val: str, name: str, session: aiohttp.Client
 
     logging.error(f"Failed to fetch signed URL for {name} after {MAX_RETRIES} attempts.")
     return None
+
 
 async def process_cpwp_url(url_val: str, name: str, session: aiohttp.ClientSession, headers: Dict[str, str]) -> str | None:
     try:
@@ -788,16 +754,13 @@ async def process_cpwp_url(url_val: str, name: str, session: aiohttp.ClientSessi
             return None
 
         if "testbook.com" in url_val or "classplusapp.com/drm" in url_val or "media-cdn.classplusapp.com/drm" in url_val:
-        #    logging.info(f"{name}:{url_val}")
             return f"{name}:{url_val}\n"
 
         async with session.get(signed_url) as response:
             response.raise_for_status()
-       #     logging.info(f"{name}:{url_val}")
             return f"{name}:{url_val}\n"
             
     except Exception as e:
-    #    logging.exception(f"Unexpected error processing {name}: {e}")
         pass
     return None
 
@@ -843,8 +806,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                         identifier = url_val.split('/')[-2]
                         url_val = f'https://media-cdn.classplusapp.com/tencent/{identifier}/master.m3u8'
                     elif "4b06bf8d61c41f8310af9b2624459378203740932b456b07fcf817b737fbae27" in url_val and url_val.endswith('.jpeg'):
-                        part = url_val.split("/")[-1].split(".")[0]
-                        url_val = f"https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{part}/master.m3u8"
+                        url_val = f'https://media-cdn.classplusapp.com/alisg-cdn-a.classplusapp.com/b08bad9ff8d969639b2e43d5769342cc62b510c4345d2f7f153bec53be84fe35/{url_val.split("/")[-1].split(".")[0]}/master.m3u8'
                     elif "cpvideocdn.testbook.com" in url_val and url_val.endswith('.png'):
                         match = re.search(r'/streams/([a-f0-9]{24})/', url_val)
                         video_id = match.group(1) if match else url_val.split('/')[-2]
@@ -869,7 +831,6 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                         url_val: str | None = content.get('url')
                         if url_val:
                             fetched_urls.add(url_val)
-                        #    logging.info(f"{name}:{url_val}")
                             results.append(f"{name}:{url_val}\n")
                             if url_val.endswith('.pdf'):
                                 pdf_count += 1
@@ -902,7 +863,6 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
             if nested_results:
                 results.extend(nested_results)
             else:
-            #    logging.warning(f"get_cpwp_course_content returned None for folder_id {folder_id}")
                 pass
             video_count += nested_video_count
             pdf_count += nested_pdf_count
@@ -911,22 +871,24 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
             logging.error(f"Error processing folder {folder_id}: {e}")
 
     return results, video_count, pdf_count, image_count
-    
+
+
 @bot.on_callback_query(filters.regex("^cpwp$"))
 async def cpwp_callback(bot, callback_query):
     user_id = callback_query.from_user.id
-    try:
-        await callback_query.answer()
-    except Exception:
-        pass
+    await callback_query.answer()
+
     auth_user = auth_users[0]
     user = await bot.get_users(auth_user)
-    owner_username = "@" + (user.username if user.username else str(user.id))
+    owner_username = "@" + user.username
+
     if user_id not in auth_users:
         await bot.send_message(callback_query.message.chat.id, f"**You Are Not Subscribed To This Bot\nContact - {owner_username}**")
-        return
-    asyncio.ensure_future(process_cpwp(bot, callback_query.message, user_id))
+        return    
+            
+    THREADPOOL.submit(asyncio.run, process_cpwp(bot, callback_query.message, user_id))
     
+
 async def process_cpwp(bot: Client, m: Message, user_id: int):
     
     headers = {
@@ -1473,6 +1435,7 @@ async def process_folder_wise_course_0(session, api, selected_batch_id, headers,
 
     return all_outputs
 
+
 async def process_folder_wise_course_1(session, api, selected_batch_id, headers, user_id):
     logging.info(f"User ID: {user_id} - Processing folder-wise course 1")
     res = await fetch_appx_html_to_json(session, f"{api}/get/folder_contentsv2?course_id={selected_batch_id}&parent_id=-1", headers)
@@ -1540,17 +1503,17 @@ async def process_folder_wise_course_1(session, api, selected_batch_id, headers,
 @bot.on_callback_query(filters.regex("^appxwp$"))
 async def appxwp_callback(bot, callback_query):
     user_id = callback_query.from_user.id
-    try:
-        await callback_query.answer()
-    except Exception:
-        pass
+    await callback_query.answer()
+
     auth_user = auth_users[0]
     user = await bot.get_users(auth_user)
-    owner_username = "@" + (user.username if user.username else str(user.id))
+    owner_username = "@" + user.username
+
     if user_id not in auth_users:
         await bot.send_message(callback_query.message.chat.id, f"**You Are Not Subscribed To This Bot\nContact - {owner_username}**")
         return
-    asyncio.ensure_future(process_appxwp(bot, callback_query.message, user_id))
+        
+    THREADPOOL.submit(asyncio.run, process_appxwp(bot, callback_query.message, user_id))
 
 
 async def process_appxwp(bot: Client, m: Message, user_id: int):
@@ -1565,8 +1528,12 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 input1 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 api = input1.text
                 await input1.delete(True)
-            except:
+            except ListenerTimeout:
                 await editable.edit("**Timeout! You took too long to respond**")
+                return
+            except Exception as e:
+                logging.exception(f"Error in input1: {e}")
+                await editable.edit(f"**Error: {e}**")
                 return
 
             if not (api.startswith("http://") or api.startswith("https://")):
@@ -1589,8 +1556,12 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                         input2 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                         raw_text2 = input2.text
                         await input2.delete(True)
-                    except:
+                    except ListenerTimeout:
                         await editable.edit("**Timeout! You took too long to respond**")
+                        return
+                    except Exception as e:
+                        logging.exception(f"Error in input2: {e}")
+                        await editable.edit(f"**Error: {e}**")
                         return
                 
                     if input2.text.isdigit() and 1 <= int(input2.text) <= len(matches):
@@ -1617,8 +1588,6 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 'Accept-Encoding': "gzip",
                 'client-service': "Appx",
                 'auth-key': "appxapi",
-         #       'user-id': userid,
-         #       'authorization': token,
                 'user_app_category': "",
                 'language': "en",
                 'device_type': "ANDROID"
@@ -1684,8 +1653,12 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 input5 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
                 raw_text5 = input5.text
                 await input5.delete(True)
-            except:
+            except ListenerTimeout:
                 await editable.edit("**Timeout! You took too long to respond**")
+                return
+            except Exception as e:
+                logging.exception(f"Error in input5: {e}")
+                await editable.edit(f"**Error: {e}**")
                 return
                 
             if input5.text.isdigit() and 1 <= int(input5.text) <= len(courses):
@@ -1787,10 +1760,22 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                 await session.close()
             await CONNECTOR.close()
 
+# ─── Flask keep-alive server for Render ───────────────────────────────────────
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def index():
+    return 'Bot is running!'
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8000))
+    flask_app.run(host="0.0.0.0", port=port)
+
+# Start Flask in background thread so Render detects open port
+threading.Thread(target=run_flask, daemon=True).start()
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 # Start Flask + Bot
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
     bot.run()
-                                        
-

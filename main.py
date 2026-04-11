@@ -68,6 +68,7 @@ if sys.version_info >= (3, 14):
 
 import requests
 import aiohttp
+import logging
 import json
 import zipfile
 from typing import Dict, List, Any, Tuple
